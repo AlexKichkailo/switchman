@@ -67,6 +67,10 @@ module Switchman
         conn.shard = current_shard
       end
 
+      def ensure_shard(conn)
+        switch_database(conn) if conn.shard != current_shard
+      end
+
       private
 
       def current_shard

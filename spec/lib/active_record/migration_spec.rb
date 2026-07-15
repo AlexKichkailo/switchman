@@ -4,6 +4,25 @@ require "spec_helper"
 
 module Switchman
   module ActiveRecord
+    describe Migration do
+      include RSpecHelper
+
+      describe "#connection" do
+        it "returns a connection aligned to its own pool's shard" do
+          migration = ::ActiveRecord::Migration.new
+          conn = migration.connection
+          expect(conn.shard).to eq(conn.pool.send(:current_shard))
+        end
+
+        it "delegates the shard switch to the connection's own pool" do
+          migration = ::ActiveRecord::Migration.new
+          pool = ::ActiveRecord::Base.connection_pool
+          expect(pool).to receive(:ensure_shard).at_least(:once).and_call_original
+          migration.connection
+        end
+      end
+    end
+
     describe MigrationContext do
       include RSpecHelper
 

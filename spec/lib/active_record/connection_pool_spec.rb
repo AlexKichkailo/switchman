@@ -43,6 +43,25 @@ module Switchman
           @pool.release_connection
         end
       end
+
+      describe "#ensure_shard" do
+        include RSpecHelper
+
+        it "switches the connection's database when its shard differs from the pool's" do
+          pool = User.connection_pool
+          conn = instance_double(::ActiveRecord::ConnectionAdapters::AbstractAdapter, shard: Shard.new)
+          expect(pool).to receive(:switch_database).with(conn)
+          pool.ensure_shard(conn)
+        end
+
+        it "does not switch when the connection is already on the pool's shard" do
+          pool = User.connection_pool
+          conn = instance_double(::ActiveRecord::ConnectionAdapters::AbstractAdapter,
+                                 shard: pool.send(:current_shard))
+          expect(pool).not_to receive(:switch_database)
+          pool.ensure_shard(conn)
+        end
+      end
     end
   end
 end

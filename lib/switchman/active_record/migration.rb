@@ -14,9 +14,7 @@ module Switchman
 
       def connection
         conn = super
-        if conn.shard != ::ActiveRecord::Base.current_switchman_shard
-          ::ActiveRecord::Base.connection_pool.switch_database(conn)
-        end
+        conn.pool.ensure_shard(conn)
         conn
       end
     end

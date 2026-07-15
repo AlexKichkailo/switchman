@@ -40,22 +40,19 @@ module Switchman
 
     module MigrationContext
       def migrate(...)
-        schema_cache_holder = ::ActiveRecord::Base.connection_pool
-        schema_cache_holder = schema_cache_holder.schema_reflection
-        previous_schema_cache = schema_cache_holder.instance_variable_get(:@cache)
-
-        schema_cache_holder.instance_variable_get(:@cache)
+        schema_reflection = migration_schema_reflection
+        previous_schema_cache = schema_reflection.instance_variable_get(:@cache)
 
         reset_column_information
-        schema_cache_holder.clear!
+        schema_reflection.clear!
 
         begin
           super
         ensure
           if ::Rails.version < "7.2"
-            schema_cache_holder.set_schema_cache(previous_schema_cache)
+            schema_reflection.set_schema_cache(previous_schema_cache)
           else
-            schema_cache_holder.instance_variable_set(:@cache, previous_schema_cache)
+            schema_reflection.instance_variable_set(:@cache, previous_schema_cache)
           end
           reset_column_information
         end
@@ -70,6 +67,11 @@ module Switchman
       end
 
       private
+
+      def migration_schema_reflection
+        pool = (::Rails.version < "7.2") ? connection.pool : connection_pool
+        pool.schema_reflection
+      end
 
       def reset_column_information
         ::ActiveRecord::Base.descendants.reject { |m| m <= UnshardedRecord }.each(&:reset_column_information)

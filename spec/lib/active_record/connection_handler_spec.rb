@@ -2,6 +2,16 @@
 
 require "spec_helper"
 
+# A throwaway abstract connection class used to exercise resolve_pool_config
+# against a real, non-primary owner without ever touching ActiveRecord::Base's
+# own connection pool. It has to be a real, reachable constant (not an
+# anonymous class with a fake name) because Switchman's own connection pool
+# code resolves the owner class back from its descriptor name via
+# +constantize+.
+class ConnectionHandlerSpecOwner < ActiveRecord::Base
+  self.abstract_class = true
+end
+
 module Switchman
   module ActiveRecord
     describe ConnectionHandler do
@@ -70,6 +80,21 @@ module Switchman
           it "does not return the global reflection" do
             a = ConnectionHandler.schema_reflection_for(fake_connection_name("QuizApi::ApplicationRecord"))
             expect(a).not_to be(ConnectionHandler.global_schema_reflection)
+          end
+
+          it "assigns a namespaced reflection to a real established connection without raising" do
+            # resolve_pool_config runs for any owner class, not just the primary
+            # one. Establishing a connection for a throwaway abstract class
+            # exercises the real override end-to-end, the same way a genuine
+            # establish_connection call would, without ever reconnecting (and
+            # risking corrupting) ActiveRecord::Base's own live pool.
+            ConnectionHandlerSpecOwner.establish_connection(::ActiveRecord::Base.connection_db_config)
+            reflection = ConnectionHandlerSpecOwner.connection_pool.pool_config.schema_reflection
+            expect(reflection).not_to be(ConnectionHandler.global_schema_reflection)
+          ensure
+            ConnectionHandlerSpecOwner.remove_connection
+            Switchman.config.delete(:namespace_schema_cache)
+            ConnectionHandler.instance_variable_set(:@namespaced_schema_reflections, nil)
           end
         end
       end

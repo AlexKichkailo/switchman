@@ -73,6 +73,25 @@ If there is no `create_statement` in the config, Switchman will create a
 suitable one for your database to just create a new schema (Postgres) or
 database (MySQL).
 
+### Namespaced schema cache
+
+By default switchman shares one schema cache across every connection pool,
+because all shards of a database have the same schema. If a single process
+connects to two databases with different schemas (for example two Rails engines
+mounted in one host, each with its own connection class), that shared cache
+collides.
+
+Enable a per-connection-class schema cache with:
+
+```ruby
+Switchman.config[:namespace_schema_cache] = true
+```
+
+When enabled, each connection class gets its own schema cache, keyed by the
+fully-qualified class name. Shards of the same connection class still share one
+cache, so the memory savings for sharded databases are preserved. The default
+(the option unset or `false`) keeps the single shared cache and is unchanged.
+
 To start reading/writing data on a shard, you need to activate it:
 
 ```ruby

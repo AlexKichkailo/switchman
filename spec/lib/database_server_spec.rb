@@ -57,6 +57,31 @@ module Switchman
         end
         expect { db.create_new_shard(name: "new_shard") }.to raise_error(exception_class)
       end
+
+      it "creates a shard for a secondary connection class" do
+        db = DatabaseServer.create(Shard.default.database_server.config)
+        new_shard = nil
+        begin
+          new_shard = db.create_new_shard(connection_class: MirrorUniverse)
+
+          expect(new_shard).not_to be_new_record
+          expect(new_shard.database_server_id).to eq db.id
+
+          # The secondary class reaches the new schema.
+          new_shard.activate(MirrorUniverse) do
+            expect(MirrorUser.create!).not_to be_new_record
+          end
+
+          # ActiveRecord::Base was never moved off the default shard.
+          expect(Shard.current(::ActiveRecord::Base)).to eq Shard.default
+        ensure
+          if new_shard
+            new_shard.drop_database(connection_class: MirrorUniverse)
+            new_shard.destroy
+          end
+          db.destroy
+        end
+      end
     end
 
     describe "#config" do

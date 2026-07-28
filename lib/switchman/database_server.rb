@@ -204,14 +204,18 @@ module Switchman
       end
     end
 
-    def create_new_shard(id: nil, name: nil, schema: true)
+    def create_new_shard(id: nil,
+                         name: nil,
+                         schema: true,
+                         connection_class: ::ActiveRecord::Base,
+                         migrations_paths: ::ActiveRecord::Migrator.migrations_paths)
       unless Shard.default.is_a?(Shard)
         raise NotImplementedError,
               "Cannot create new shards when sharding isn't initialized"
       end
 
       create_statement = -> { "CREATE SCHEMA #{name}" }
-      password = " PASSWORD #{::ActiveRecord::Base.connection.quote(config[:password])}" if config[:password]
+      password = " PASSWORD #{connection_class.connection.quote(config[:password])}" if config[:password]
       sharding_config = Switchman.config
       config_create_statement = sharding_config[config[:adapter]]&.[](:create_statement)
       config_create_statement ||= sharding_config[:create_statement]
@@ -235,46 +239,62 @@ module Switchman
       Shard.connection.transaction do
         self.class.creating_new_shard = true
         DatabaseServer.send(:reference_role, :deploy)
-        ::ActiveRecord::Base.connected_to(shard: self.id.to_sym, role: :deploy) do
+        connection_class.connected_to(shard: self.id.to_sym, role: :deploy) do
           shard = Shard.create!(id:,
                                 name:,
                                 database_server_id: self.id)
           if create_statement
-            if ::ActiveRecord::Base.connection.select_value(
-              "SELECT 1 FROM pg_namespace WHERE nspname=#{::ActiveRecord::Base.connection.quote(name)}"
+            if connection_class.connection.select_value(
+              "SELECT 1 FROM pg_namespace WHERE nspname=#{connection_class.connection.quote(name)}"
             )
               schema_already_existed = true
               raise "This schema already exists; cannot overwrite"
             end
             Array(create_statement.call).each do |stmt|
-              ::ActiveRecord::Base.connection.execute(stmt)
+              connection_class.connection.execute(stmt)
             end
           end
           if config[:adapter] == "postgresql"
-            old_proc = ::ActiveRecord::Base.connection.raw_connection.set_notice_processor {}
+            old_proc = connection_class.connection.raw_connection.set_notice_processor {}
           end
           old_verbose = ::ActiveRecord::Migration.verbose
           ::ActiveRecord::Migration.verbose = false
 
           unless schema == false
-            shard.activate do
-              ::ActiveRecord::Base.connection.transaction(requires_new: true) do
-                ::ActiveRecord::MigrationContext.new(::ActiveRecord::Migrator.migrations_paths).migrate
+            shard.activate(connection_class) do
+              # 7.1 hangs the migration bookkeeping off the connection; 7.2 moved it to the pool
+              migration_owner = if ::Rails.version < "7.2"
+                                  connection_class.connection
+                                else
+                                  connection_class.connection_pool
+                                end
+              ::ActiveRecord::Tasks::DatabaseTasks.with_migration_class(connection_class) do
+                connection_class.connection.transaction(requires_new: true) do
+                  ::ActiveRecord::MigrationContext.new(migrations_paths,
+                                                       migration_owner.schema_migration,
+                                                       migration_owner.internal_metadata).migrate
+                end
               end
 
-              ::ActiveRecord::Base.descendants.reject do |m|
+              connection_class.descendants.reject do |m|
                 m <= UnshardedRecord || !m.table_exists?
               end.each(&:define_attribute_methods)
             end
           end
         ensure
           ::ActiveRecord::Migration.verbose = old_verbose
-          ::ActiveRecord::Base.connection.raw_connection.set_notice_processor(&old_proc) if old_proc
+          connection_class.connection.raw_connection.set_notice_processor(&old_proc) if old_proc
         end
         shard
       rescue
         shard&.destroy
-        shard&.drop_database rescue nil unless schema_already_existed
+        unless schema_already_existed
+          begin
+            shard&.drop_database(connection_class:)
+          rescue
+            nil
+          end
+        end
         raise
       ensure
         self.class.creating_new_shard = false

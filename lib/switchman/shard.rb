@@ -609,12 +609,12 @@ module Switchman
       lookup(str.to_i)
     end
 
-    def drop_database
+    def drop_database(connection_class: ::ActiveRecord::Base)
       raise "Cannot drop the database of the default shard" if default?
       return unless read_attribute(:name)
 
       begin
-        activate do
+        activate(connection_class) do
           self.class.drop_database(name)
         end
       rescue ::ActiveRecord::StatementInvalid => e
